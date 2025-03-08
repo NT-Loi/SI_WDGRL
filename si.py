@@ -142,11 +142,34 @@ def get_dnn_interval(model, Xtj, a, b):
 
     return itv, u, v
 
-def truncated_cdf(etajTy, mu, sigma, left, right):
-    numerator = mp.ncdf((etajTy - mu) / sigma) - mp.ncdf((left - mu) / sigma)
-    denominator = mp.ncdf((right - mu) / sigma) - mp.ncdf((left - mu) / sigma)
-    true_cdf = numerator / denominator 
-    return true_cdf
+def tn_cdf(tt, mu, sigma, list_intervals):
+    if len(list_intervals) == 0:
+        print('Error no interval')
+        return None
+
+    list_tn_cdf = []
+    for interval in list_intervals:
+        temp = mp.ncdf((interval[1] - mu) / sigma) - mp.ncdf((interval[0] - mu) / sigma)
+        list_tn_cdf.append(temp)
+
+    numerator = 0
+    for i in range(len(list_intervals)):
+        interval = list_intervals[i]
+
+        if tt > interval[1]:
+            numerator += list_tn_cdf[i]
+        else:
+            numerator += mp.ncdf((tt - mu) / sigma) - mp.ncdf((interval[0] - mu) / sigma)
+            break
+
+    denominator = sum(list_tn_cdf)
+
+    if denominator == 0.0:
+        print('Numerical error')
+        return None
+
+    cdf = float(numerator / denominator)
+    return cdf
 
 def run_oc(model):
     ns, nt = 100, 100
@@ -183,29 +206,68 @@ def run_oc(model):
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
 
-    itv = [np.NINF, np.inf]
+    itv1 = [np.NINF, np.inf]
     for i in range(X.shape[0]):
-        itv = intersect(itv, get_dnn_interval(model, X[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1))[0])
-
-    sub_itv = [np.NINF, np.inf]
-    _, uo, vo = get_dnn_interval(model, X[O[0]+100].reshape(-1, 1), a[O[0]+100].reshape(-1, 1), b[O[0]+100].reshape(-1, 1))
+        itv1 = intersect(itv1, get_dnn_interval(model, X[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1))[0])
+    itv2 = [np.NINF, np.inf]
+    _, uo, vo = get_dnn_interval(model, X[O[0]+ns].reshape(-1, 1), a[O[0]+ns].reshape(-1, 1), b[O[0]+ns].reshape(-1, 1))
     I = np.ones((X_hat.shape[1],1))
     for i in range(X.shape[0]):
-        if (i != O[0]+100):
+        if (i != O[0]+ns):
             _, ui, vi = get_dnn_interval(model, X[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1))
             u = uo - ui
             v = vo - vi 
             u = I.T.dot(u)[0][0]
             v = I.T.dot(v)[0][0]
-            sub__itv = solve_linear_inequality(-u, -v)
-            sub_itv = intersect(sub_itv, sub__itv)
-    itv = intersect(itv, sub_itv)
-
-    cdf = truncated_cdf(etajTX[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), itv[0], itv[1])
+            sub_itv = solve_linear_inequality(-u, -v)
+            itv2 = intersect(itv2, sub_itv)
+    itv = intersect(itv1, itv2)
+    # print("Interval 1:\t", itv1)
+    # print("Interval 2:\t", itv2)
+    # print("Interval:\t", itv)
+    # print("----------------------------------------------")    
+    cdf = tn_cdf(etajTX[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), [itv])
     p_value = float(2 * min(cdf, 1 - cdf))
     return p_value
     
-def run_parametric(model):
+def divide_conquer(model, ns, nt, a, b, zmin, zmax):
+    list_intervals = []
+    list_O = []
+    z = zmin
+    while z <= zmax:
+        print(z)
+        Xz = a+b*z
+        Xz_hat = model.generator(torch.tensor(Xz, dtype=torch.float32)).detach().numpy()
+        Oz, _ = basic_anomaly_detection(Xz_hat)
+        if Oz < ns:
+            z += 1e-3
+            print('---------------------------')
+            continue
+        Oz = [Oz-ns]
+        itv1 = [np.NINF, np.inf]
+        for i in range(Xz.shape[0]):
+            itv1 = intersect(itv1, get_dnn_interval(model, Xz[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1))[0])
+        itv2 = [np.NINF, np.inf]
+        _, uo, vo = get_dnn_interval(model, Xz[Oz[0]+ns].reshape(-1, 1), a[Oz[0]+ns].reshape(-1, 1), b[Oz[0]+ns].reshape(-1, 1))
+        I = np.ones((Xz_hat.shape[1],1))
+        for i in range(Xz.shape[0]):
+            if (i != Oz[0]+ns):
+                _, ui, vi = get_dnn_interval(model, Xz[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1))
+                u = uo - ui
+                v = vo - vi 
+                u = I.T.dot(u)[0][0]
+                v = I.T.dot(v)[0][0]
+                sub_itv = solve_linear_inequality(-u, -v)
+                itv2 = intersect(itv2, sub_itv)
+        itv = intersect(itv1, itv2)
+        list_intervals.append(itv)
+        list_O.append(Oz)
+        print(f'{itv}\t\t{Oz}\n')
+        print('---------------------------')
+        z = itv[1] + 1e-3
+    return list_intervals, list_O
+
+def run_pp(model):
     ns, nt = 100, 100
     d = 1
     mu_s, mu_t = 0, 2
@@ -219,7 +281,7 @@ def run_parametric(model):
     X_hat = np.vstack((Xs_hat, Xt_hat))
     O, Y_hat = basic_anomaly_detection(X_hat)
     if O < ns:
-        # print("Anomaly detected in source domain.")
+        print("Anomaly detected in source domain.")
         return None
     O = [O-ns]
     Oc = list(np.where(Y_hat[ns:ns+nt] == 0)[0])
@@ -239,28 +301,23 @@ def run_parametric(model):
     
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
+    
+    zmin, zmax = -20, 20
+    list_intervals, list_O = divide_conquer(model, ns, nt, a, b, zmin, zmax)
+    
+    with open("itv_O.txt", "a") as file:
+        file.write(f"{etajTX[0][0]}\t\t{O}\n")
+        for i in range(len(list_intervals)):
+            file.write(f"{list_intervals[i]}\t\t{list_O[i]}\n")
 
-    itv = [np.NINF, np.inf]
-    for i in range(X.shape[0]):
-        itv = intersect(itv, get_dnn_interval(model, X[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1))[0])
+    Z = []
+    for i in range(len(list_intervals)):
+        if np.array_equal(list_O[i], O):
+            Z.append(list_intervals[i])
 
-    sub_itv = [np.NINF, np.inf]
-    _, uo, vo = get_dnn_interval(model, X[O[0]+100].reshape(-1, 1), a[O[0]+100].reshape(-1, 1), b[O[0]+100].reshape(-1, 1))
-    I = np.ones((X_hat.shape[1],1))
-    for i in range(X.shape[0]):
-        if (i != O[0]+100):
-            _, ui, vi = get_dnn_interval(model, X[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1))
-            u = uo - ui
-            v = vo - vi 
-            u = I.T.dot(u)[0][0]
-            v = I.T.dot(v)[0][0]
-            sub__itv = solve_linear_inequality(-u, -v)
-            sub_itv = intersect(sub_itv, sub__itv)
-    itv = intersect(itv, sub_itv)
-
-    cdf = truncated_cdf(etajTX[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), itv[0], itv[1])
-    p_value = float(2 * min(cdf, 1 - cdf))
-    return p_value
+    cdf = tn_cdf(etajTX[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), Z)
+    pivot = float(2 * min(cdf, 1 - cdf))
+    return pivot
 
 if __name__ == '__main__':
     os.environ["MKL_NUM_THREADS"] = "1"
@@ -301,26 +358,31 @@ if __name__ == '__main__':
         checkpoint = torch.load(f"models/{model_name}.pth", map_location=model.device, weights_only=True)
         print(f"Model loaded successfully from models/{model_name}.pth!")
 
-    max_iteration = 2000
-    alpha = 0.05
-    list_p_value = []
-    count = 0
-    detect = 0
+    # max_iteration = 2000
+    # alpha = 0.05
+    # list_p_value = []
+    # count = 0
+    # detect = 0
 
-    list_model = [model] * max_iteration
-    pool = Pool(initializer=np.random.seed)
-    list_result = pool.map(run_oc, list_model)
+    # list_model = [model] * max_iteration
+    # pool = Pool(initializer=np.random.seed)
+    # list_result = pool.map(run_pp, list_model)
 
-    for p_value in list_result:
-        if p_value is None:
-            continue
-        detect += 1
-        list_p_value.append(p_value)
-        if p_value <= alpha:
-            count += 1
+    # for p_value in list_result:
+    #     if p_value is None:
+    #         continue
+    #     detect += 1
+    #     list_p_value.append(p_value)
+    #     if p_value <= alpha:
+    #         count += 1
 
-    print(f'FPR: {count / detect}')
-    plt.hist(list_p_value)
-    plt.show()
-    plt.close()
-    print(f"ks-test result: {stats.kstest(list_p_value, 'uniform')[1]}")
+    # plt.hist(list_p_value)
+    # plt.show()
+    # plt.close()
+
+    # print(f'FPR: {count / detect}')
+    # print(f"ks-test result: {stats.kstest(list_p_value, 'uniform')[1]}")
+
+    # print(f'TPR: {count / detect}') 
+
+    run_pp(model)
