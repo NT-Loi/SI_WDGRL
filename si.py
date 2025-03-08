@@ -84,16 +84,15 @@ def intersect(itv1, itv2):
     return itv
 
 def solve_linear_inequality(u, v): #u + vz < 0
-    if (v > -1e-16 and v < 1e-16):
-        v = 0
+    if v == 0:
         if (u < 0):
-            return [np.NINF, np.inf]
+            return [-mp.inf, mp.inf]
         else:
             print('error')
             return None
     if (v < 0):
-        return [-u/v, np.inf]
-    return [np.NINF, -u/v]
+        return [-u/v, mp.inf]
+    return [-mp.inf, -u/v]
 
 def get_dnn_interval(model, Xtj, a, b):
     layers = []
@@ -108,7 +107,7 @@ def get_dnn_interval(model, Xtj, a, b):
                 layers.append('ReLU')
 
     ptr = 0
-    itv = [np.NINF, np.inf]
+    itv = [-mp.inf, mp.inf]
     u = a
     v = b
     temp = Xtj
@@ -128,13 +127,13 @@ def get_dnn_interval(model, Xtj, a, b):
         if (ptr < len(layers) and layers[ptr] == 'ReLU'):
             ptr += 1
             Relu_matrix = np.zeros((temp.shape[0], temp.shape[0]))
-            sub_itv = [np.NINF, np.inf]
+            sub_itv = [-mp.inf, mp.inf]
             for i in range(temp.shape[0]):
                 if temp[i] > 0:
                     Relu_matrix[i][i] = 1
-                    sub_itv = intersect(sub_itv, solve_linear_inequality(-u[i][0], -v[i][0]))
+                    sub_itv = intersect(sub_itv, solve_linear_inequality(mp.mpf(-u[i][0]), mp.mpf(-v[i][0])))
                 else:
-                    sub_itv = intersect(sub_itv, solve_linear_inequality(u[i][0], v[i][0]))
+                    sub_itv = intersect(sub_itv, solve_linear_inequality(mp.mpf(u[i][0]), mp.mpf(v[i][0])))
             itv = intersect(itv, sub_itv)
             temp = Relu_matrix.dot(temp)
             u = Relu_matrix.dot(u)
@@ -206,10 +205,10 @@ def run_oc(model):
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
 
-    itv1 = [np.NINF, np.inf]
+    itv1 = [-mp.inf, mp.inf]
     for i in range(X.shape[0]):
         itv1 = intersect(itv1, get_dnn_interval(model, X[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1))[0])
-    itv2 = [np.NINF, np.inf]
+    itv2 = [-mp.inf, mp.inf]
     _, uo, vo = get_dnn_interval(model, X[O[0]+ns].reshape(-1, 1), a[O[0]+ns].reshape(-1, 1), b[O[0]+ns].reshape(-1, 1))
     I = np.ones((X_hat.shape[1],1))
     for i in range(X.shape[0]):
@@ -219,7 +218,7 @@ def run_oc(model):
             v = vo - vi 
             u = I.T.dot(u)[0][0]
             v = I.T.dot(v)[0][0]
-            sub_itv = solve_linear_inequality(-u, -v)
+            sub_itv = solve_linear_inequality(mp.mpf(-u), mp.mpf(-v))
             itv2 = intersect(itv2, sub_itv)
     itv = intersect(itv1, itv2)
     # print("Interval 1:\t", itv1)
@@ -233,7 +232,7 @@ def run_oc(model):
 def divide_conquer(model, ns, nt, a, b, zmin, zmax):
     list_intervals = []
     list_O = []
-    z = zmin
+    z = float(zmin)
     while z <= zmax:
         print(z)
         Xz = a+b*z
@@ -244,10 +243,10 @@ def divide_conquer(model, ns, nt, a, b, zmin, zmax):
             print('---------------------------')
             continue
         Oz = [Oz-ns]
-        itv1 = [np.NINF, np.inf]
+        itv1 = [-mp.inf, mp.inf]
         for i in range(Xz.shape[0]):
             itv1 = intersect(itv1, get_dnn_interval(model, Xz[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1))[0])
-        itv2 = [np.NINF, np.inf]
+        itv2 = [-mp.inf, mp.inf]
         _, uo, vo = get_dnn_interval(model, Xz[Oz[0]+ns].reshape(-1, 1), a[Oz[0]+ns].reshape(-1, 1), b[Oz[0]+ns].reshape(-1, 1))
         I = np.ones((Xz_hat.shape[1],1))
         for i in range(Xz.shape[0]):
@@ -257,14 +256,16 @@ def divide_conquer(model, ns, nt, a, b, zmin, zmax):
                 v = vo - vi 
                 u = I.T.dot(u)[0][0]
                 v = I.T.dot(v)[0][0]
-                sub_itv = solve_linear_inequality(-u, -v)
+                sub_itv = solve_linear_inequality(mp.mpf(-u), mp.mpf(-v))
                 itv2 = intersect(itv2, sub_itv)
         itv = intersect(itv1, itv2)
         list_intervals.append(itv)
         list_O.append(Oz)
-        print(f'{itv}\t\t{Oz}\n')
+        start = float(itv[0])
+        end = float(itv[1])
+        print(f'[{start}, {end}]\t\t{Oz}\n')
         print('---------------------------')
-        z = itv[1] + 1e-3
+        z = float(itv[1] + 1e-3)
     return list_intervals, list_O
 
 def run_pp(model):
@@ -308,7 +309,9 @@ def run_pp(model):
     with open("itv_O.txt", "a") as file:
         file.write(f"{etajTX[0][0]}\t\t{O}\n")
         for i in range(len(list_intervals)):
-            file.write(f"{list_intervals[i]}\t\t{list_O[i]}\n")
+            start = float(list_intervals[i][0])
+            end = float(list_intervals[i][1])
+            file.write(f"[{start}, {end}]\t\t{list_O[i]}\n")
 
     Z = []
     for i in range(len(list_intervals)):
