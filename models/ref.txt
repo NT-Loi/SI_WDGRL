@@ -1,0 +1,5 @@
+name                    generator                                           domain_critic               Status                                     
+wdgrl_1				[10, 10, 10]										[10]                            Passed
+wdgrl_2				[10, 10, 10, 10]										[10]                        Passed
+wdgrl_3				[8, 4, 2]										[10]                                Failed
+wdgrl_4				[8, 4, 2, 1]										[10]                            Failed
