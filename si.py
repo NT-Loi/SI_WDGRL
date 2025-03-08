@@ -85,16 +85,16 @@ def intersect(itv1, itv2):
     return itv
 
 def solve_linear_inequality(u, v): #u + vz < 0
-    if v > -1e-7 and v < 1e-7:
-        v = 0
-        if (u < 0):
-            return [-np.inf, np.inf]
-        else:
-            print('error')
-            return None
-    if (v < 0):
+    if v < 0:
         return [-u/v, np.inf]
-    return [-np.inf, -u/v]
+    elif v > 0:
+        return [-np.inf, -u/v]
+    if u < 0:
+        return [-np.inf, np.inf]
+    else:
+        print('\n', u, v)
+        print('\nerror')
+        return None
 
 def get_dnn_interval(model, Xtj, a, b):
     layers = []
@@ -238,7 +238,7 @@ def divide_conquer(model, ns, nt, a, b, zmin, zmax):
     while z <= zmax:
         # print(z)
         Xz = a+b*z
-        Xz_hat = model.generator(torch.tensor(Xz, dtype=torch.float32)).detach().numpy()
+        Xz_hat = model.generator(torch.tensor(Xz, dtype=torch.float64)).detach().numpy()
         Oz, _ = basic_anomaly_detection(Xz_hat)
         if Oz < ns:
             z += 1e-3
@@ -261,9 +261,6 @@ def divide_conquer(model, ns, nt, a, b, zmin, zmax):
                 sub_itv = solve_linear_inequality(-u, -v)
                 itv2 = intersect(itv2, sub_itv)
         itv = intersect(itv1, itv2)
-        if z > itv[1]:
-            z += 1e-3
-            continue
         list_intervals.append(itv)
         list_O.append(Oz)
         # print(f'{itv}\t\t{Oz}\n')
@@ -280,12 +277,12 @@ def run_pp(model):
     Xs, _ = gen_data(ns, d, mu_s, delta_s)
     Xt, __ = gen_data(nt, d, mu_t, delta_t)
 
-    Xs_hat = model.generator(torch.tensor(Xs, dtype=torch.float32)).detach().numpy()
-    Xt_hat = model.generator(torch.tensor(Xt, dtype=torch.float32)).detach().numpy()
+    Xs_hat = model.generator(torch.tensor(Xs, dtype=torch.float64)).detach().numpy()
+    Xt_hat = model.generator(torch.tensor(Xt, dtype=torch.float64)).detach().numpy()
     X_hat = np.vstack((Xs_hat, Xt_hat))
     O, Y_hat = basic_anomaly_detection(X_hat)
     if O < ns:
-        print("Anomaly detected in source domain.")
+        # print("Anomaly detected in source domain.")
         return None
     O = [O-ns]
     Oc = list(np.where(Y_hat[ns:ns+nt] == 0)[0])
@@ -312,9 +309,7 @@ def run_pp(model):
     # with open("itv_O.txt", "a") as file:
     #     file.write(f"{etajTX[0][0]}\t\t{O}\n")
     #     for i in range(len(list_intervals)):
-    #         start = float(list_intervals[i][0])
-    #         end = float(list_intervals[i][1])
-    #         file.write(f"[{start}, {end}]\t\t{list_O[i]}\n")
+    #         file.write(f"{list_intervals[i]}\t\t{list_O[i]}\n")
 
     Z = []
     for i in range(len(list_intervals)):
@@ -364,8 +359,10 @@ if __name__ == '__main__':
         model_name = f'wdgrl_{index}'
         # Load the saved checkpoint
         checkpoint = torch.load(f"models/{model_name}.pth", map_location=model.device, weights_only=True)
+        model.generator.load_state_dict(checkpoint['generator_state_dict'])
+        model.critic.load_state_dict(checkpoint['critic_state_dict'])
         print(f"Model loaded successfully from models/{model_name}.pth!")
-
+    model.generator = model.generator.to(dtype=torch.float64)
     max_iteration = 2000
     alpha = 0.05
     list_p_value = []
