@@ -8,6 +8,7 @@ import torch
 import os
 import scipy.stats as stats
 from multiprocessing import Pool
+from tqdm import tqdm
 
 def gen_data(n: int, d: int, mu: float, delta: List[int]):
     mu = np.full((n, d), mu, dtype=np.float64)
@@ -84,7 +85,7 @@ def intersect(itv1, itv2):
     return itv
 
 def solve_linear_inequality(u, v): #u + vz < 0
-    if v > -1e-10 and v < 1e-10:
+    if v > -1e-7 and v < 1e-7:
         v = 0
         if (u < 0):
             return [-np.inf, np.inf]
@@ -372,8 +373,8 @@ if __name__ == '__main__':
     detect = 0
 
     list_model = [model] * max_iteration
-    pool = Pool(initializer=np.random.seed)
-    list_result = pool.map(run_pp, list_model)
+    with Pool(initializer=np.random.seed) as pool:
+        list_result = list(tqdm(pool.imap(run_pp, list_model), total=max_iteration))
 
     for p_value in list_result:
         if p_value is None:
